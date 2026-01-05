@@ -1,0 +1,7 @@
+{
+  "name": "ETF Insight & Portfolio Builder",
+  "description": "An AI-powered application that extracts ETF knowledge from news, web searches, or pasted email content to generate long-term investment recommendations tailored to your risk profile.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
