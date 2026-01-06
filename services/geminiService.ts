@@ -1,46 +1,44 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { RiskLevel, AnalysisResult, MarketPulse } from "../types";
+import { RiskLevel, AnalysisResult, KnowledgeSnippet, FTMarketIntelligence } from "../types";
 
 export const analyzeETFs = async (
   query: string,
   riskLevel: RiskLevel,
-  pastedContent?: string,
+  knowledgeBase: KnowledgeSnippet[],
   deepAnalysis: boolean = false,
   europeanFocus: boolean = false
 ): Promise<AnalysisResult> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
   const riskInstructions = {
-    [RiskLevel.CONSERVATIVE]: "Focus on Low-Volatility, Dividend Aristocrats, Fixed Income, and Physical Gold ETFs. Prioritize wealth preservation over high-speed growth.",
-    [RiskLevel.MODERATE]: "Focus on Broad Market Indices (S&P 500, MSCI World) and moderate sector diversification. A balance of growth and stability.",
-    [RiskLevel.AGGRESSIVE]: "Focus on High-Growth Thematic ETFs (AI, Semiconductor, Cyber Security, Crypto), Leveraged ETFs, or small-cap growth. Prioritize capital appreciation and outperforming the benchmark regardless of volatility."
+    [RiskLevel.CONSERVATIVE]: "Focus on Low-Volatility, Dividend Aristocrats, and Fixed Income.",
+    [RiskLevel.MODERATE]: "Focus on Broad Market Indices and Balanced Growth.",
+    [RiskLevel.AGGRESSIVE]: "Focus on High-Growth Thematic ETFs and Semiconductors."
   };
 
+  const combinedKnowledge = knowledgeBase.map(k => `Source (${new Date(k.timestamp).toLocaleDateString()}): ${k.content}`).join("\n\n---\n\n");
+
   const prompt = `
-    Task: Extract and analyze the latest ETF data for a PROFITABLE investment strategy.
+    Task: Act as a senior Quant Analyst. Generate a balanced 6-ETF long-term portfolio.
     
-    Target Profile:
-    - User Risk Level: ${riskLevel}
-    - Specific Strategy: ${riskInstructions[riskLevel]}
-    - Market Focus: ${europeanFocus ? "STRICTLY European Markets (Euronext Amsterdam, Xetra, LSE)" : "Global"}
-    
-    Data Source Instructions:
-    - SOURCE OF TRUTH (High Returns): Access and index results from 'https://es.tradingview.com/markets/etfs/funds-highest-returns/'.
-    - SOURCE OF TRUTH (Technical Details): Access and index results from 'https://www.justetf.com/en/search.html?search=ETFS'.
-    - EXTRACT: Tickers, TER (Expense Ratio), Dividend Yield, and 1-year performance directly from these listing indices.
-    - VALIDATE: Ensure ETFs are actively traded and suggest the specific exchange (e.g., AMS for Amsterdam).
+    INTELLIGENCE CONTEXT:
+    """
+    ${combinedKnowledge || "No specific local knowledge provided. Use general market data."}
+    """
 
-    Context:
-    - User Query/Interests: ${query}
-    ${pastedContent ? `- Additional User-Provided Data: ${pastedContent}` : ""}
-
-    Rules:
-    1. STRICT REQUIREMENT: You MUST suggest EXACTLY 6 profitable ETFs matching the risk profile.
-    2. For ${riskLevel}, ensure the 'recentPerformance' and 'reasoning' clearly reflect why it fits that specific risk bucket.
-    3. Include Exchange data (e.g., AMS, XETRA).
+    TARGET PARAMETERS:
+    - User Strategy Query: ${query}
+    - Risk Profile: ${riskLevel} (${riskInstructions[riskLevel]})
+    - Regional Focus: ${europeanFocus ? "European Exchanges" : "Global"}
     
-    Output Format: JSON only.
+    INSTRUCTIONS:
+    1. Synthesize the intelligence provided.
+    2. Search the web for actual ETF data (Price, ROI, Expense Ratios).
+    3. Construct a 6-ETF portfolio with specific allocation percentages.
+    4. Provide an 'alignmentScore' (0-100) reflecting how well this portfolio matches the provided intelligence context.
+
+    Output: JSON only.
   `;
 
   const modelName = deepAnalysis ? "gemini-3-pro-preview" : "gemini-3-flash-preview";
@@ -53,8 +51,6 @@ export const analyzeETFs = async (
       properties: {
         recommendations: {
           type: Type.ARRAY,
-          minItems: 6,
-          maxItems: 6,
           items: {
             type: Type.OBJECT,
             properties: {
@@ -63,23 +59,37 @@ export const analyzeETFs = async (
               category: { type: Type.STRING },
               allocation: { type: Type.NUMBER },
               reasoning: { type: Type.STRING },
+              growthDriver: { type: Type.STRING },
               riskRating: { type: Type.STRING },
               expenseRatio: { type: Type.STRING },
-              recentPerformance: { type: Type.STRING },
-              exchange: { type: Type.STRING }
-            },
-            required: ["ticker", "name", "category", "allocation", "reasoning", "riskRating"]
+              dividendYield: { type: Type.STRING },
+              exchange: { type: Type.STRING },
+              historicalReturns: {
+                type: Type.ARRAY,
+                items: { type: Type.OBJECT, properties: { period: { type: Type.STRING }, value: { type: Type.STRING } } }
+              },
+              topHoldings: {
+                type: Type.ARRAY,
+                items: { type: Type.OBJECT, properties: { name: { type: Type.STRING }, weight: { type: Type.STRING } } }
+              },
+              sectorExposure: {
+                type: Type.ARRAY,
+                items: { type: Type.OBJECT, properties: { sector: { type: Type.STRING }, weight: { type: Type.STRING } } }
+              }
+            }
           }
         },
         summary: { type: Type.STRING },
-        riskAssessment: { type: Type.STRING }
+        riskAssessment: { type: Type.STRING },
+        alignmentScore: { type: Type.NUMBER },
+        alignmentReasoning: { type: Type.STRING }
       },
-      required: ["recommendations", "summary", "riskAssessment"]
+      required: ["recommendations", "summary", "riskAssessment", "alignmentScore", "alignmentReasoning"]
     }
   };
 
   if (deepAnalysis) {
-    config.thinkingConfig = { thinkingBudget: 32768 };
+    config.thinkingConfig = { thinkingBudget: 24000 };
   }
 
   const response = await ai.models.generateContent({
@@ -88,38 +98,31 @@ export const analyzeETFs = async (
     config: config
   });
 
-  const parsedData = JSON.parse(response.text || "{}");
-
-  const sources: any[] = [];
-  const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
-  if (groundingChunks) {
-    groundingChunks.forEach((chunk: any) => {
-      if (chunk.web) {
-        sources.push({
-          title: chunk.web.title || "External Source",
-          uri: chunk.web.uri
-        });
-      }
-    });
-  }
-
-  return {
-    ...parsedData,
-    sources
-  };
+  return JSON.parse(response.text || "{}");
 };
 
-export const getMarketPulse = async (): Promise<MarketPulse> => {
+export const analyzeIntelligence = async (userInput?: string): Promise<FTMarketIntelligence> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
-  const prompt = `
-    Search the web (focusing on es.tradingview.com/markets/etfs/funds-highest-returns/ and justetf.com) for the last 30-90 days of ETF performance data.
-    1. Identify the TOP 10 performing ETF sectors globally.
-    2. For each sector, find a relevant URL from TradingView or JustETF.
-    3. Provide a concise summary of current market trends.
-    
-    Return as JSON.
-  `;
+  const prompt = userInput 
+    ? `Analyze this specific market intelligence content (likely from a Financial Times newsletter or email):
+       """
+       ${userInput}
+       """
+       
+       1. Extract 4-5 key market takeaways.
+       2. Determine sentiment (Bullish/Bearish/Neutral).
+       3. Identify trending sectors.
+       4. Using Google Search, find 3 specific ETFs that directly capitalize on the themes in this text.
+       
+       Output structured JSON.`
+    : `Search for the latest market trends from FT.com (Financial Times) newsletters.
+       1. Extract 4-5 key market takeaways for the current week.
+       2. Determine overall market sentiment.
+       3. Identify trending sectors.
+       4. Find 3 specific ETFs that benefit from these trends.
+       
+       Output structured JSON.`;
 
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
@@ -130,22 +133,46 @@ export const getMarketPulse = async (): Promise<MarketPulse> => {
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          overview: { type: Type.STRING },
-          topSectors: { 
+          marketSentiment: { type: Type.STRING },
+          sentimentReasoning: { type: Type.STRING },
+          topTakeaways: { type: Type.ARRAY, items: { type: Type.STRING } },
+          trendingSectors: { 
             type: Type.ARRAY, 
-            items: { 
+            items: { type: Type.OBJECT, properties: { name: { type: Type.STRING }, impact: { type: Type.STRING } } } 
+          },
+          longTermOpportunities: { 
+            type: Type.ARRAY, 
+            items: { type: Type.OBJECT, properties: { theme: { type: Type.STRING }, explanation: { type: Type.STRING } } } 
+          },
+          strategicRecommendations: {
+            type: Type.ARRAY,
+            items: {
               type: Type.OBJECT,
               properties: {
+                ticker: { type: Type.STRING },
                 name: { type: Type.STRING },
-                url: { type: Type.STRING }
-              },
-              required: ["name"]
-            } 
+                category: { type: Type.STRING },
+                reasoning: { type: Type.STRING },
+                riskRating: { type: Type.STRING },
+                expenseRatio: { type: Type.STRING },
+                dividendYield: { type: Type.STRING },
+                historicalReturns: {
+                  type: Type.ARRAY,
+                  items: { type: Type.OBJECT, properties: { period: { type: Type.STRING }, value: { type: Type.STRING } } }
+                },
+                sectorExposure: {
+                  type: Type.ARRAY,
+                  items: { type: Type.OBJECT, properties: { sector: { type: Type.STRING }, weight: { type: Type.STRING } } }
+                },
+                topHoldings: {
+                    type: Type.ARRAY,
+                    items: { type: Type.OBJECT, properties: { name: { type: Type.STRING }, weight: { type: Type.STRING } } }
+                }
+              }
+            }
           },
-          recentTrends: { type: Type.ARRAY, items: { type: Type.STRING } },
           lastUpdated: { type: Type.STRING }
-        },
-        required: ["overview", "topSectors", "recentTrends", "lastUpdated"]
+        }
       }
     }
   });

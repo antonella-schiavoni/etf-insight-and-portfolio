@@ -1,457 +1,392 @@
 
 import React, { useState, useEffect } from 'react';
-import { RiskLevel, AnalysisResult, MarketPulse } from './types';
-import { analyzeETFs, getMarketPulse } from './services/geminiService';
+import { RiskLevel, AnalysisResult, ETFRecommendation, KnowledgeSnippet, FTMarketIntelligence } from './types';
+import { analyzeETFs, analyzeIntelligence } from './services/geminiService';
 import RiskSelector from './components/RiskSelector';
-import PortfolioChart from './components/PortfolioChart';
+
+type DisplayMetric = '1Y' | 'Policy' | 'TER';
+type AppTab = 'intel' | 'portfolio';
 
 const App: React.FC = () => {
+  const [activeTab, setActiveTab] = useState<AppTab>('intel');
   const [query, setQuery] = useState('');
-  const [emailContent, setEmailContent] = useState('');
+  const [pastedText, setPastedText] = useState('');
+  const [knowledgeBase, setKnowledgeBase] = useState<KnowledgeSnippet[]>([]);
   const [riskLevel, setRiskLevel] = useState<RiskLevel>(RiskLevel.MODERATE);
   const [deepAnalysis, setDeepAnalysis] = useState(false);
-  const [europeanFocus, setEuropeanFocus] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [pulseLoading, setPulseLoading] = useState(false);
+  const [intelLoading, setIntelLoading] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [marketPulse, setMarketPulse] = useState<MarketPulse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [intelResult, setIntelResult] = useState<FTMarketIntelligence | null>(null);
+  const [selectedETF, setSelectedETF] = useState<ETFRecommendation | null>(null);
+  const [metric, setMetric] = useState<DisplayMetric>('1Y');
 
   useEffect(() => {
-    fetchPulse();
+    const sKnowledge = localStorage.getItem('equity_hub_knowledge');
+    if (sKnowledge) setKnowledgeBase(JSON.parse(sKnowledge));
   }, []);
 
-  const fetchPulse = async () => {
-    setPulseLoading(true);
+  const saveKnowledge = (kb: KnowledgeSnippet[]) => {
+    setKnowledgeBase(kb);
+    localStorage.setItem('equity_hub_knowledge', JSON.stringify(kb));
+  };
+
+  const handleProcessIntel = async () => {
+    if (!pastedText.trim()) return;
+    setIntelLoading(true);
+    setActiveTab('intel'); // Automatically switch to intel tab when processing
     try {
-      const pulse = await getMarketPulse();
-      setMarketPulse(pulse);
+      const intel = await analyzeIntelligence(pastedText);
+      setIntelResult(intel);
+
+      const newSnippet: KnowledgeSnippet = {
+        id: crypto.randomUUID(),
+        content: pastedText,
+        timestamp: Date.now(),
+        sourceType: 'Manual'
+      };
+      saveKnowledge([newSnippet, ...knowledgeBase]);
+      setPastedText('');
     } catch (err) {
-      console.error("Failed to fetch market pulse", err);
+      console.error(err);
     } finally {
-      setPulseLoading(false);
+      setIntelLoading(false);
     }
   };
 
-  const handleAnalyze = async () => {
+  const handleGeneratePortfolio = async () => {
     setLoading(true);
-    setError(null);
+    setActiveTab('portfolio'); // Automatically switch to portfolio tab
     try {
-      const data = await analyzeETFs(
-        query || 'High-profitability growth ETFs', 
-        riskLevel, 
-        emailContent,
-        deepAnalysis,
-        europeanFocus
-      );
+      const data = await analyzeETFs(query || 'Long-term diversified', riskLevel, knowledgeBase, deepAnalysis);
       setResult(data);
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
-      setError('Market grounding failed. We tried indexing TradingView and JustETF results. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
+  const getMetricValue = (etf: any) => {
+    switch (metric) {
+      case '1Y': return { val: etf.historicalReturns?.find((r: any) => r.period === '1Y')?.value || 'N/A', label: '1Y RETURN' };
+      case 'Policy': return { val: etf.dividendYield, label: 'POLICY' };
+      case 'TER': return { val: etf.expenseRatio, label: 'EXPENSE' };
+      default: return { val: etf.historicalReturns?.[0]?.value || 'N/A', label: 'ROI' };
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-slate-900 selection:bg-blue-100 pb-24">
-      {/* Navigation */}
-      <nav className="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b border-slate-200">
-        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-slate-900 rounded-xl flex items-center justify-center shadow-lg">
-              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-              </svg>
-            </div>
-            <div>
-              <h1 className="text-lg font-black tracking-tighter text-slate-800 leading-none">EQUITY HUB</h1>
-              <p className="text-[10px] uppercase tracking-[0.2em] text-blue-600 font-bold mt-1">Intelligence Terminal</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-4">
-             <button 
-               onClick={fetchPulse}
-               disabled={pulseLoading}
-               className="hidden md:flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-full border border-slate-200 hover:bg-white transition-all group"
-             >
-                <div className={`w-2 h-2 rounded-full ${pulseLoading ? 'bg-orange-500 animate-ping' : 'bg-green-500'}`}></div>
-                <span className="text-[10px] font-black text-slate-600 uppercase tracking-widest group-hover:text-slate-900">
-                  {pulseLoading ? 'Sourcing Returns...' : 'Market Pulse Live'}
-                </span>
+    <div className="min-h-screen bg-[#f8fafc] text-slate-900 font-sans selection:bg-blue-100 pb-20">
+      {/* Detail Modal */}
+      {selectedETF && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 backdrop-blur-md bg-slate-900/40">
+          <div className="bg-white w-full max-w-4xl max-h-[90vh] rounded-[3rem] shadow-2xl overflow-y-auto p-12 relative animate-in zoom-in duration-200">
+             <button onClick={() => setSelectedETF(null)} className="absolute top-8 right-8 p-3 bg-slate-50 rounded-full hover:bg-slate-100 transition-colors">
+               <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
              </button>
+             <div className="flex items-center gap-6 mb-10">
+                <div className="w-20 h-20 bg-slate-900 rounded-3xl flex items-center justify-center text-white text-3xl font-black">{selectedETF.ticker.slice(0,3)}</div>
+                <div>
+                   <h2 className="text-5xl font-black tracking-tighter text-slate-900">{selectedETF.ticker}</h2>
+                   <p className="text-slate-400 font-black uppercase tracking-widest text-xs mt-1">{selectedETF.name}</p>
+                </div>
+             </div>
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                <div className="p-8 bg-blue-50 rounded-[2.5rem] border border-blue-100">
+                   <h4 className="text-[10px] font-black text-blue-600 uppercase mb-4 tracking-widest">Investment Rationale</h4>
+                   <p className="text-lg font-bold text-slate-700 leading-relaxed">{selectedETF.reasoning}</p>
+                </div>
+                <div className="space-y-6">
+                   <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sector Exposure</h4>
+                   <div className="space-y-4">
+                      {selectedETF.sectorExposure?.map((s, i) => (
+                        <div key={i}>
+                           <div className="flex justify-between text-xs font-black text-slate-600 mb-1"><span>{s.sector}</span><span>{s.weight}</span></div>
+                           <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-blue-600" style={{ width: s.weight }}></div>
+                           </div>
+                        </div>
+                      ))}
+                   </div>
+                </div>
+             </div>
           </div>
+        </div>
+      )}
+
+      {/* Navigation */}
+      <nav className="h-20 bg-white border-b border-slate-200 px-8 flex items-center justify-between sticky top-0 z-50">
+        <div className="flex items-center gap-4 font-black">
+           <div className="w-10 h-10 bg-slate-900 rounded-xl flex items-center justify-center text-white">EH</div>
+           <h1 className="text-xl tracking-tight uppercase">Equity Hub <span className="text-blue-600">Quant</span></h1>
+        </div>
+        <div className="flex items-center gap-6">
+           {/* Tab Switcher Integrated in Nav or separate - let's make it a prominent UI element below */}
+           <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+              System Live
+              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+           </div>
         </div>
       </nav>
 
-      <main className="max-w-7xl mx-auto px-4 py-8">
-        {/* Top Section: Market Pulse / Monthly Trends */}
-        <section className="mb-8">
-          <div className="bg-white rounded-[2.5rem] p-8 border border-slate-200 shadow-sm overflow-hidden relative group">
-            <div className="absolute top-0 right-0 p-8 text-slate-50 group-hover:text-slate-100 transition-colors pointer-events-none">
-              <svg className="w-40 h-40" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5v-9l6 4.5-6 4.5z"/></svg>
-            </div>
-            
-            <div className="relative z-10">
+      <main className="max-w-[1440px] mx-auto px-8 py-10 grid grid-cols-12 gap-10">
+        
+        {/* LEFT COLUMN: PERSISTENT HUB & INPUTS */}
+        <aside className="col-span-12 lg:col-span-4 space-y-8">
+           {/* STEP 1: Knowledge Hub Tile */}
+           <section className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-slate-200">
               <div className="flex items-center justify-between mb-6">
-                <div>
-                  <h2 className="text-2xl font-black tracking-tight text-slate-800">Monthly Market Pulse</h2>
-                  <p className="text-sm text-slate-500 font-medium italic">Grounded Analysis via <a href="https://es.tradingview.com/markets/etfs/funds-highest-returns/" target="_blank" rel="noreferrer" className="text-blue-600 underline">TradingView Returns</a> & JustETF</p>
-                </div>
-                {marketPulse && (
-                  <div className="text-right">
-                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Grounded Data As Of</div>
-                    <div className="text-sm font-black text-slate-700">{marketPulse.lastUpdated}</div>
-                  </div>
-                )}
+                 <h2 className="text-xs font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2">
+                    <span className="w-5 h-5 bg-slate-900 text-white rounded-full flex items-center justify-center text-[10px]">1</span>
+                    Intelligence Hub
+                 </h2>
+                 <button onClick={() => saveKnowledge([])} className="text-[9px] font-black text-rose-500 uppercase hover:underline">Clear Hub</button>
               </div>
-
-              {pulseLoading ? (
-                <div className="animate-pulse space-y-4">
-                  <div className="h-6 bg-slate-100 rounded w-3/4"></div>
-                  <div className="h-20 bg-slate-50 rounded"></div>
-                </div>
-              ) : marketPulse ? (
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                  <div className="lg:col-span-8">
-                    <p className="text-slate-600 leading-relaxed font-medium mb-6 text-lg italic border-l-4 border-blue-500 pl-6">
-                      "{marketPulse.overview}"
-                    </p>
-                    <div className="flex flex-wrap gap-3">
-                      {marketPulse.recentTrends.map((trend, i) => (
-                        <div key={i} className="px-4 py-2 bg-slate-900 text-white rounded-2xl text-xs font-bold shadow-lg shadow-slate-200">
-                          {trend}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="lg:col-span-4 bg-blue-50 rounded-[2rem] p-6 border border-blue-100">
-                    <div className="flex items-center justify-between mb-4">
-                      <h4 className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Top 10 Sectors (Performance)</h4>
-                      <a 
-                        href="https://es.tradingview.com/markets/etfs/funds-highest-returns/" 
-                        target="_blank" 
-                        rel="noreferrer"
-                        className="text-[8px] font-black text-slate-400 hover:text-blue-600 uppercase tracking-widest"
-                      >
-                        [Source: TradingView]
-                      </a>
-                    </div>
-                    <ul className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-x-4 gap-y-2">
-                      {marketPulse.topSectors.map((sector, i) => (
-                        <li key={i} className="flex items-center group">
-                          <div className="w-5 h-5 bg-blue-500 rounded flex items-center justify-center text-white text-[8px] font-black mr-3 shrink-0">{i+1}</div>
-                          <a 
-                            href={sector.url || "#"} 
-                            target="_blank" 
-                            rel="noreferrer" 
-                            className="text-xs font-bold text-slate-700 hover:text-blue-600 truncate group-hover:underline"
-                          >
-                            {sector.name}
-                          </a>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-center py-12 text-slate-400 font-bold uppercase tracking-widest text-xs">
-                  Connect to fetch latest market intelligence
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-          {/* Sidebar Controls */}
-          <div className="lg:col-span-4 space-y-6">
-            <section className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-200">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-xs font-black uppercase tracking-widest text-slate-400">Strategy Settings</h2>
-                <a 
-                  href="https://es.tradingview.com/markets/etfs/funds-highest-returns/" 
-                  target="_blank" 
-                  rel="noreferrer" 
-                  className="text-[9px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-1 rounded-lg border border-blue-100 hover:bg-blue-100 transition-colors"
+              <textarea 
+                  value={pastedText}
+                  onChange={(e) => setPastedText(e.target.value)}
+                  placeholder="Paste FT newsletter content or private market data..."
+                  className="w-full h-40 bg-slate-50 p-6 rounded-3xl font-bold text-sm outline-none focus:ring-2 focus:ring-blue-500 transition-all border border-slate-100 placeholder:text-slate-300"
+              />
+              <div className="grid grid-cols-1 gap-3 mt-4">
+                <button 
+                    onClick={handleProcessIntel}
+                    disabled={intelLoading || !pastedText.trim()}
+                    className={`w-full py-5 rounded-[1.8rem] font-black text-[10px] uppercase tracking-widest text-white transition-all shadow-lg ${
+                        intelLoading || !pastedText.trim() ? 'bg-slate-200 cursor-not-allowed shadow-none' : 'bg-rose-600 hover:bg-rose-700 shadow-rose-100 hover:-translate-y-0.5'
+                    }`}
                 >
-                  View TradingView Returns
-                </a>
+                    {intelLoading ? 'Processing Intel...' : 'Analyze Market Intel'}
+                </button>
               </div>
-              
-              <div className="space-y-6">
-                <div>
-                  <label className="block text-[10px] font-black text-slate-500 uppercase mb-2 tracking-widest">Focus for Profitability</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. AI Technology, Renewables..."
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    className="w-full px-5 py-4 bg-slate-50 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-blue-500/10 focus:bg-white focus:border-blue-500 transition-all outline-none font-bold text-sm"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-black text-slate-500 uppercase mb-2 tracking-widest">Knowledge Ingestion</label>
-                  <textarea
-                    rows={4}
-                    placeholder="Paste data for specific analysis..."
-                    value={emailContent}
-                    onChange={(e) => setEmailContent(e.target.value)}
-                    className="w-full px-5 py-4 bg-slate-50 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-blue-500/10 focus:bg-white focus:border-blue-500 transition-all outline-none font-bold text-sm resize-none"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-3">
-                  <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-200">
-                    <div className="space-y-0.5">
-                      <div className="text-sm font-black text-slate-800">Thinking Mode</div>
-                      <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Gemini 3 Pro Logic</div>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        className="sr-only peer" 
-                        checked={deepAnalysis}
-                        onChange={() => setDeepAnalysis(!deepAnalysis)}
-                      />
-                      <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                    </label>
-                  </div>
-
-                  <div className="flex items-center justify-between p-4 bg-blue-50 rounded-2xl border border-blue-100">
-                    <div className="space-y-0.5">
-                      <div className="text-sm font-black text-blue-800">Europe Focus</div>
-                      <div className="text-[10px] text-blue-400 font-bold uppercase tracking-widest">AMS / Euronext Data</div>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        className="sr-only peer" 
-                        checked={europeanFocus}
-                        onChange={() => setEuropeanFocus(!europeanFocus)}
-                      />
-                      <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                    </label>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-200">
-              <h2 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-6">Risk Tolerance</h2>
-              <RiskSelector value={riskLevel} onChange={setRiskLevel} />
-              
-              <button
-                onClick={handleAnalyze}
-                disabled={loading}
-                className={`w-full py-5 mt-6 rounded-[1.5rem] font-black uppercase tracking-widest text-sm text-white shadow-2xl transition-all flex items-center justify-center gap-3 active:scale-95 ${
-                  loading ? 'bg-slate-400 shadow-none cursor-wait' : 'bg-gradient-to-r from-blue-600 to-blue-800 hover:from-blue-700 hover:to-blue-900 shadow-blue-200'
-                }`}
-              >
-                {loading ? (
-                   <span className="flex items-center gap-3">
-                     <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                     </svg>
-                     <span>{deepAnalysis ? 'Deep Reasoning...' : 'Indexing Returns...'}</span>
-                   </span>
-                ) : (
-                  <>
-                    <span>Generate Portfolio (6 ETFs)</span>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                  </>
-                )}
-              </button>
-            </section>
-          </div>
-
-          {/* Result Terminal */}
-          <div className="lg:col-span-8 space-y-8">
-            {!result && !loading && (
-              <div className="bg-white rounded-[3rem] p-20 text-center border border-dashed border-slate-300">
-                <div className="w-24 h-24 bg-blue-50 rounded-[2.5rem] flex items-center justify-center mx-auto mb-8">
-                   <svg className="w-12 h-12 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                   </svg>
-                </div>
-                <h3 className="text-3xl font-black text-slate-800 mb-4 tracking-tight italic">Portfolio Terminal</h3>
-                <p className="text-slate-500 max-w-sm mx-auto text-sm font-bold uppercase tracking-widest leading-loose">
-                  Connected to TradingView & JustETF Search Feed. Optimization focus: {europeanFocus ? "AMS / Euronext" : "Global Markets"}.
-                </p>
-              </div>
-            )}
-
-            {error && (
-              <div className="bg-red-50 border-2 border-red-100 p-8 rounded-[2.5rem] text-red-800 flex items-start gap-4">
-                <div className="bg-red-100 p-3 rounded-2xl">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-                </div>
-                <div>
-                  <h4 className="font-black text-xl mb-1">Retrieval Failed</h4>
-                  <p className="text-sm font-bold opacity-70">{error}</p>
-                </div>
-              </div>
-            )}
-
-            {loading && (
-              <div className="space-y-6">
-                <div className="bg-white rounded-[3rem] p-16 border border-slate-200 flex flex-col items-center justify-center text-center shadow-sm">
-                   <div className="relative w-24 h-24 mb-10">
-                      <div className="absolute inset-0 border-8 border-slate-50 rounded-full"></div>
-                      <div className="absolute inset-0 border-8 border-blue-600 rounded-full border-t-transparent animate-spin"></div>
-                      <div className="absolute inset-0 flex items-center justify-center">
-                         <svg className={`w-8 h-8 text-blue-600 ${deepAnalysis ? 'animate-pulse' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
-                         </svg>
+              <div className="mt-6 space-y-2 max-h-40 overflow-y-auto custom-scrollbar">
+                  {knowledgeBase.length === 0 && <p className="text-[10px] text-slate-300 font-bold uppercase text-center py-4">Knowledge Hub Empty</p>}
+                  {knowledgeBase.map(k => (
+                      <div key={k.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between text-[10px] font-bold text-slate-400">
+                          <span className="truncate w-32">{k.content}</span>
+                          <span>{new Date(k.timestamp).toLocaleDateString()}</span>
                       </div>
-                   </div>
-                   <h3 className="text-2xl font-black text-slate-800 mb-2 tracking-tight">
-                     {deepAnalysis ? "Performing Deep Logic" : "Indexing Market High-Returns"}
-                   </h3>
-                   <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px]">
-                     Sourcing top performance from TradingView & technicals from JustETF
-                   </p>
-                </div>
-              </div>
-            )}
-
-            {result && !loading && (
-              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-6 duration-1000">
-                {/* Result Header */}
-                <div className="bg-slate-900 rounded-[3rem] p-10 text-white shadow-2xl relative overflow-hidden ring-1 ring-white/10">
-                  <div className="absolute -bottom-32 -left-32 w-80 h-80 bg-blue-500/10 rounded-full blur-[120px]"></div>
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-10 relative z-10">
-                    <div className="md:col-span-8">
-                       <div className="flex items-center gap-3 mb-8">
-                          <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] border ${deepAnalysis ? 'bg-indigo-500/20 border-indigo-400/30 text-indigo-300' : 'bg-blue-500/20 border-blue-400/30 text-blue-300'}`}>
-                             {deepAnalysis ? 'Deep Analysis Strategy' : 'Returns-Grounded Strategy'}
-                          </span>
-                          <span className="w-1.5 h-1.5 rounded-full bg-slate-700"></span>
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{riskLevel} Profile</span>
-                       </div>
-                       <h2 className="text-4xl font-black mb-6 tracking-tight leading-none">High-Alpha Portfolio</h2>
-                       <p className="text-slate-300 leading-relaxed font-bold text-lg opacity-80">
-                         {result.summary}
-                       </p>
-                    </div>
-                    <div className="md:col-span-4 flex flex-col items-center justify-center bg-white/5 rounded-[2.5rem] p-6 border border-white/5">
-                       <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-6">Asset Distribution</h4>
-                       <PortfolioChart recommendations={result.recommendations} />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Recommendations Stack - Tiles one behind the other */}
-                <div className="flex flex-col gap-6">
-                  {result.recommendations.map((etf, i) => (
-                    <div 
-                      key={i} 
-                      style={{ 
-                        transform: `translateY(${i * 4}px)`, 
-                        zIndex: result.recommendations.length - i,
-                        boxShadow: `0 ${20 + i * 5}px ${50 + i * 10}px -12px rgba(0,0,0,0.1)` 
-                      }}
-                      className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm hover:shadow-2xl transition-all duration-500 group relative w-full"
-                    >
-                       <div className="flex items-start justify-between mb-6">
-                          <div className="flex items-center gap-4">
-                             <div className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center text-white font-black text-xs">
-                               #{i+1}
-                             </div>
-                             <div>
-                                <span className="text-4xl font-black text-slate-900 tracking-tighter group-hover:text-blue-600 transition-colors">{etf.ticker}</span>
-                                <h3 className="font-bold text-slate-400 text-xs truncate uppercase tracking-widest">{etf.name}</h3>
-                             </div>
-                          </div>
-                          <div className="text-right">
-                             <div className="text-3xl font-black text-blue-600 tabular-nums leading-none">
-                                {etf.allocation}<span className="text-sm font-bold">%</span>
-                             </div>
-                             {etf.recentPerformance && (
-                               <div className="text-[10px] font-black text-emerald-500 uppercase mt-1 tracking-tighter">
-                                 {etf.recentPerformance}
-                               </div>
-                             )}
-                          </div>
-                       </div>
-                       <div className="flex flex-wrap gap-2 mb-6">
-                          <span className="text-[9px] font-black uppercase px-3 py-1 bg-slate-100 text-slate-600 rounded-full">{etf.category}</span>
-                          <span className={`text-[9px] font-black uppercase px-3 py-1 rounded-full border ${
-                            etf.riskRating === 'Low' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
-                            etf.riskRating === 'Medium' ? 'bg-yellow-50 text-yellow-600 border-yellow-100' :
-                            'bg-orange-50 text-orange-600 border-orange-100'
-                          }`}>
-                            {etf.riskRating} Risk
-                          </span>
-                          {etf.exchange && (
-                            <span className="text-[9px] font-black uppercase px-3 py-1 bg-blue-50 text-blue-700 rounded-full border border-blue-100">
-                              {etf.exchange}
-                            </span>
-                          )}
-                       </div>
-                       <p className="text-sm text-slate-600 leading-relaxed font-bold opacity-80 group-hover:opacity-100 transition-opacity">
-                         {etf.reasoning}
-                       </p>
-                    </div>
                   ))}
-                </div>
-
-                {/* Bottom Intelligence Grid */}
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 pt-8">
-                  <div className="lg:col-span-7 bg-blue-600 rounded-[3rem] p-10 text-white shadow-xl shadow-blue-100 relative overflow-hidden">
-                    <div className="absolute top-0 right-0 p-8 opacity-10">
-                       <svg className="w-32 h-32" fill="currentColor" viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.5h7c-.47 4.34-2.85 8.16-7 9.49V11.5H5V6.3l7-3.11v8.31z"/></svg>
-                    </div>
-                    <h4 className="text-xl font-black mb-4 tracking-tight flex items-center gap-3">
-                       <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 12l2 2 4-4"/></svg>
-                       </div>
-                       Grounded Risk Assessment
-                    </h4>
-                    <p className="text-blue-100 leading-relaxed font-bold italic text-lg opacity-90">
-                      {result.riskAssessment}
-                    </p>
-                  </div>
-
-                  <div className="lg:col-span-5 bg-white p-10 rounded-[3rem] border border-slate-200 shadow-sm">
-                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-8 border-b border-slate-100 pb-4">
-                       Intelligence Feed Sources
-                    </h4>
-                    <div className="space-y-4">
-                       {result.sources.slice(0, 6).map((source, i) => (
-                         <a 
-                           key={i} 
-                           href={source.uri} 
-                           target="_blank" 
-                           rel="noopener noreferrer"
-                           className="flex items-center justify-between group p-4 rounded-2xl hover:bg-slate-50 transition-all border border-transparent hover:border-slate-100"
-                         >
-                            <span className="text-xs font-black text-slate-800 truncate max-w-[200px]">{source.title}</span>
-                            <svg className="w-4 h-4 text-slate-300 group-hover:text-blue-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
-                         </a>
-                       ))}
-                    </div>
-                  </div>
-                </div>
               </div>
-            )}
-          </div>
+           </section>
+
+           {/* Parameters Tile */}
+           <section className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-slate-200 space-y-6">
+              <h2 className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">Strategy Engine</h2>
+              <div className="space-y-4">
+                  <div>
+                    <label className="text-[10px] font-black text-slate-400 uppercase mb-2 block tracking-widest">Investment Query</label>
+                    <input 
+                      type="text" 
+                      value={query} 
+                      onChange={e => setQuery(e.target.value)} 
+                      placeholder="e.g. AI & Tech, Clean Energy..." 
+                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-sm outline-none focus:bg-white focus:ring-2 focus:ring-blue-500 transition-all"
+                    />
+                  </div>
+                  <RiskSelector value={riskLevel} onChange={setRiskLevel} />
+                  <button 
+                    onClick={handleGeneratePortfolio}
+                    disabled={loading}
+                    className={`w-full py-6 rounded-[2rem] font-black text-sm uppercase tracking-widest text-white transition-all shadow-xl ${
+                        loading ? 'bg-slate-300 animate-pulse' : 'bg-slate-900 hover:bg-black shadow-slate-200 hover:-translate-y-0.5'
+                    }`}
+                  >
+                    {loading ? 'Building Portfolio...' : 'Generate Full Strategy'}
+                  </button>
+              </div>
+           </section>
+        </aside>
+
+        {/* RIGHT COLUMN: TABBED ANALYTICS */}
+        <div className="col-span-12 lg:col-span-8 space-y-6">
+           
+           {/* Tab Bar */}
+           <div className="flex bg-white p-2 rounded-[2rem] border border-slate-200 shadow-sm mb-4">
+              <button 
+                onClick={() => setActiveTab('intel')}
+                className={`flex-1 flex items-center justify-center gap-3 py-4 rounded-[1.5rem] font-black text-[11px] uppercase tracking-widest transition-all ${activeTab === 'intel' ? 'bg-rose-600 text-white shadow-lg shadow-rose-100' : 'text-slate-400 hover:bg-slate-50'}`}
+              >
+                <span className="w-5 h-5 bg-white/20 rounded-full flex items-center justify-center">2</span>
+                Market Intelligence
+                {intelResult && <div className="w-1.5 h-1.5 rounded-full bg-white ml-1"></div>}
+              </button>
+              <button 
+                onClick={() => setActiveTab('portfolio')}
+                className={`flex-1 flex items-center justify-center gap-3 py-4 rounded-[1.5rem] font-black text-[11px] uppercase tracking-widest transition-all ${activeTab === 'portfolio' ? 'bg-blue-600 text-white shadow-lg shadow-blue-100' : 'text-slate-400 hover:bg-slate-50'}`}
+              >
+                <span className="w-5 h-5 bg-white/20 rounded-full flex items-center justify-center">3</span>
+                Master Portfolio
+                {result && <div className="w-1.5 h-1.5 rounded-full bg-white ml-1"></div>}
+              </button>
+           </div>
+
+           {/* Tab Content: Market Intelligence */}
+           {activeTab === 'intel' && (
+             <section className="bg-white rounded-[3rem] p-10 border border-slate-200 shadow-sm min-h-[500px] animate-in fade-in slide-in-from-left-4 duration-300">
+                <div className="flex items-center justify-between mb-10">
+                   <h2 className="text-xl font-black uppercase tracking-tight text-slate-400">Intelligence Desk Analysis</h2>
+                   {intelLoading && <div className="flex items-center gap-2 text-rose-600 font-black text-[10px] uppercase animate-pulse">Processing Sources...</div>}
+                </div>
+
+                {!intelResult && !intelLoading && (
+                    <div className="flex flex-col items-center justify-center text-center py-24">
+                        <div className="w-20 h-20 bg-rose-50 rounded-full flex items-center justify-center mb-6">
+                            <svg className="w-10 h-10 text-rose-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
+                        </div>
+                        <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight mb-2">Market Analysis Waiting</h3>
+                        <p className="text-slate-400 text-sm font-bold uppercase tracking-widest max-w-xs leading-relaxed">
+                          Paste your newsletter content in the Intelligence Hub on the left to extract key takeaways and thematic ETF suggestions.
+                        </p>
+                    </div>
+                )}
+
+                {intelResult && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                        <div className="space-y-8">
+                            <div className="p-8 bg-[#fffcfc] border border-rose-100 rounded-[2.5rem] relative overflow-hidden shadow-sm">
+                                <div className="absolute top-0 left-0 w-2 h-full bg-rose-600"></div>
+                                <h4 className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-4">Extracted Sentiment</h4>
+                                <div className="text-5xl font-black text-rose-950 uppercase tracking-tighter mb-4">{intelResult.marketSentiment}</div>
+                                <p className="text-sm font-bold text-rose-800/80 leading-relaxed italic border-l-2 border-rose-200 pl-6">"{intelResult.sentimentReasoning}"</p>
+                            </div>
+                            <div className="space-y-4">
+                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Key Takeaways</h4>
+                                {intelResult.topTakeaways.map((t, i) => (
+                                    <div key={i} className="flex gap-4 text-xs font-bold text-slate-700 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                                        <span className="text-rose-500 font-black shrink-0">0{i+1}</span>
+                                        <span>{t}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="space-y-8">
+                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Direct ETF Recommendations</h4>
+                            <div className="grid grid-cols-1 gap-4">
+                                {intelResult.strategicRecommendations?.map((etf, i) => (
+                                    <div key={i} onClick={() => setSelectedETF(etf as any)} className="p-6 bg-white border border-slate-100 rounded-3xl hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex justify-between items-center shadow-sm">
+                                        <div className="flex-1">
+                                            <div className="text-2xl font-black text-slate-900 group-hover:text-rose-600 transition-colors uppercase tracking-tight">{etf.ticker}</div>
+                                            <p className="text-[10px] font-black text-slate-400 leading-none mt-2 line-clamp-1">{etf.name}</p>
+                                        </div>
+                                        <div className="text-right">
+                                           <span className="bg-rose-50 text-rose-600 text-[9px] font-black px-3 py-1.5 rounded-xl uppercase tracking-widest">Intel Match</span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100">
+                               <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Hot Sectors</h4>
+                               <div className="flex flex-wrap gap-3">
+                                  {intelResult.trendingSectors.map((s, i) => (
+                                      <span key={i} className="px-4 py-2 bg-white border border-slate-200 text-slate-700 text-[10px] font-black rounded-2xl uppercase shadow-sm">
+                                          {s.name} <span className={s.impact === 'Positive' ? 'text-emerald-500' : 'text-rose-400'}>{s.impact === 'Positive' ? '↑' : '↓'}</span>
+                                      </span>
+                                  ))}
+                               </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+             </section>
+           )}
+
+           {/* Tab Content: Master Portfolio */}
+           {activeTab === 'portfolio' && (
+             <section className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-300">
+                {!result && !loading && (
+                    <div className="h-[500px] bg-white rounded-[3rem] border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-center p-12">
+                        <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mb-6">
+                            <svg className="w-10 h-10 text-blue-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" /></svg>
+                        </div>
+                        <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight mb-2">Portfolio Generator Ready</h3>
+                        <p className="text-slate-400 text-sm font-bold uppercase tracking-widest max-w-sm leading-relaxed">
+                          Setup your strategy parameters on the left and click "Generate" to construct your optimized 6-ETF long-term portfolio.
+                        </p>
+                    </div>
+                )}
+
+                {loading && (
+                    <div className="h-[500px] bg-white rounded-[3rem] border border-slate-200 flex flex-col items-center justify-center text-center p-12 animate-pulse">
+                        <div className="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center mb-6 animate-bounce">
+                           <div className="w-8 h-8 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
+                        </div>
+                        <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">Synthesizing Alpha...</h3>
+                        <p className="text-slate-400 text-xs font-black uppercase tracking-widest mt-4">Cross-referencing Intelligence Hub with global markets</p>
+                    </div>
+                )}
+
+                {result && !loading && (
+                    <div className="space-y-8">
+                        <div className="bg-slate-900 text-white rounded-[3.5rem] p-12 flex flex-col md:flex-row items-center gap-10 shadow-2xl relative overflow-hidden group">
+                            <div className="absolute top-0 right-0 w-64 h-64 bg-blue-600/10 rounded-full blur-3xl -mr-32 -mt-32"></div>
+                            <div className="flex-1 space-y-4 relative z-10">
+                                <h3 className="text-4xl font-black uppercase tracking-tighter leading-none">Balanced Strategy: {riskLevel}</h3>
+                                <p className="text-slate-400 text-sm font-bold leading-relaxed italic border-l-2 border-blue-600 pl-8 py-2">"{result.alignmentReasoning}"</p>
+                            </div>
+                            <div className="text-center shrink-0 relative z-10 px-8 py-6 bg-white/5 rounded-[2.5rem] backdrop-blur-md border border-white/10">
+                                <div className="text-7xl font-black text-blue-500 tracking-tighter tabular-nums leading-none">{result.alignmentScore}<span className="text-2xl">%</span></div>
+                                <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-2">Intelligence Sync</div>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-4">
+                           <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 ml-4">Portfolio Constituents</h4>
+                           <div className="flex items-center gap-2 bg-white p-1.5 rounded-2xl border border-slate-200">
+                               {(['1Y', 'Policy', 'TER'] as const).map(m => (
+                                   <button key={m} onClick={() => setMetric(m)} className={`px-5 py-2.5 rounded-xl text-[9px] font-black transition-all ${metric === m ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>
+                                       {m === 'TER' ? 'EXPENSE' : m === 'Policy' ? 'DIVIDEND' : '1Y ROI'}
+                                   </button>
+                               ))}
+                           </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                            {result.recommendations.map((etf, i) => {
+                                const mData = getMetricValue(etf);
+                                return (
+                                    <div key={i} onClick={() => setSelectedETF(etf)} className="bg-white p-10 rounded-[3rem] border border-slate-200 hover:shadow-2xl hover:-translate-y-2 transition-all duration-500 cursor-pointer group flex flex-col">
+                                        <div className="flex justify-between items-start mb-8">
+                                            <div className="w-12 h-12 bg-slate-900 text-white rounded-2xl flex items-center justify-center font-black text-sm">#{i+1}</div>
+                                            <div className="text-right">
+                                                <div className="text-4xl font-black text-blue-600 tabular-nums leading-none tracking-tighter">{etf.allocation}%</div>
+                                                <div className="text-[9px] font-black text-slate-300 uppercase tracking-widest mt-1">Weight</div>
+                                            </div>
+                                        </div>
+                                        <div className="flex-1">
+                                          <h3 className="text-4xl font-black text-slate-900 tracking-tighter uppercase group-hover:text-blue-600 transition-colors leading-none mb-2">{etf.ticker}</h3>
+                                          <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-8 line-clamp-1">{etf.name}</p>
+                                        </div>
+                                        <div className="pt-6 border-t border-slate-100 flex items-center justify-between">
+                                            <div>
+                                                <div className="text-xl font-black text-slate-900 tabular-nums leading-none mb-1">{mData.val}</div>
+                                                <div className="text-[9px] font-black text-slate-300 uppercase tracking-widest">{mData.label}</div>
+                                            </div>
+                                            <div className="text-right">
+                                                <span className={`px-2 py-1 rounded-lg text-[9px] font-black text-white uppercase tracking-widest ${etf.riskRating === 'Low' ? 'bg-emerald-500' : etf.riskRating === 'Medium' ? 'bg-blue-500' : 'bg-orange-500'}`}>{etf.riskRating}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+             </section>
+           )}
         </div>
+
       </main>
 
-      {/* Info Bar */}
-      <footer className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-xl border-t border-slate-200 py-4 z-50">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-4">
-           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-             Primary Data Feed: <a href="https://es.tradingview.com/markets/etfs/funds-highest-returns/" target="_blank" rel="noreferrer" className="text-blue-600">TradingView High-Returns</a>
-           </p>
-           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-center md:text-right">
-             AI Data Terminal • Not Financial Advice • 6-ETF Balanced Strategy
-           </p>
-        </div>
-      </footer>
+      <style>{`
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+        @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+        .animate-in { animation: fade-in 0.3s ease-out; }
+      `}</style>
     </div>
   );
 };
